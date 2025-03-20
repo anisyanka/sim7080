@@ -34,28 +34,32 @@ typedef enum {
  * All possible errors.
  */
 typedef enum {
-    SIM7080_SUCCESS,
-    SIM7080_COMMON_FAIL,
-    SIM7080_NOT_SUPPORTED,
-    SIM7080_INIT_BAD_ARGS,
-    SIM7080_INIT_TIMEOUT,
+    SIM7080_STATUS_SUCCESS,
+    SIM7080_STATUS_COMMON_FAIL,
+    SIM7080_STATUS_HW_TX_FAIL,
+    SIM7080_STATUS_NOT_SUPPORTED,
+    SIM7080_STATUS_INIT_BAD_ARGS,
+    SIM7080_STATUS_INIT_TIMEOUT,
+
 } sim7080_err_t;
 
 /*
  * SIM7080 module state machine
  */
 typedef enum {
-    SIM7080_SOME_ERR_HAPPENED = -1,
-    SIM7080_INITIAL,
-    SIM7080_INIT_IN_PROGRESS,
-    SIM7080_NET_CONNECT_IN_PROGRESS,
-    SIM7080_NET_CONNECT_FAILED,
-    SIM7080_NET_CONNECTED,
-    SIM7080_PROTO_CONNECT_IN_PROGRESS,
-    SIM7080_PROTO_CONNECT_FAILED,
-    SIM7080_PROTO_CONNECTED,
-    SIM7080_TRANSMIT_USER_DATA_DONE,
-    SIM7080_RECEIVE_NEW_USER_DATA_DONE,
+    SIM7080_SM_SOME_ERR_HAPPENED = -1,
+    SIM7080_SM_INITIAL,
+    SIM7080_SM_INIT_IN_PROGRESS,
+    SIM7080_SM_INIT_DONE,
+    SIM7080_SM_NET_CONNECT_IN_PROGRESS,
+    SIM7080_SM_NET_CONNECT_FAILED,
+    SIM7080_SM_NET_CONNECTED,
+    SIM7080_SM_PROTO_CONNECT_IN_PROGRESS,
+    SIM7080_SM_PROTO_CONNECT_FAILED,
+    SIM7080_SM_PROTO_CONNECTED,
+    SIM7080_SM_MQTT_READY_TO_WORK,
+    SIM7080_SM_TRANSMIT_USER_DATA_DONE,
+    SIM7080_SM_RECEIVE_NEW_USER_DATA_DONE,
 } sim7080_sm_t;
 
 /*
@@ -123,8 +127,8 @@ typedef struct {
     void (*pwrkey_pin_set)(void);
     void (*pwrkey_pin_reset)(void);
 
-    /* UART related functions */
-    int (*transmit_data)(uint8_t *dafa, size_t len);
+    /* UART related functions. Returns SIM7080_STATUS_SUCCESS in case of success */
+    int (*transmit_data)(uint8_t *data, size_t len);
 } sim7080_ll_t;
 
 /*
@@ -135,7 +139,6 @@ typedef struct {
     sim7080_network_settings_t *net_settings;
     sim7080_protocol_settings_t *prot_settings;
     int state;
-    int last_error;
 } sim7080_dev_t;
 
 
@@ -144,18 +147,24 @@ typedef struct {
 /*******************************/
 
 /*
- * Base init and ensure the sim7080 module is alive:
- *  - Toggle POWER KEY
+ * Assign net and protocol parameters and toggle POWER KEY
+ *
+ *  Returns SIM7080_SUCCESS in case of init process CAN BE started.
+ */
+int sim7080_init_hw_and_net_params(sim7080_dev_t *dev,
+                                   sim7080_network_settings_t *net_setup,
+                                   sim7080_protocol_settings_t *prot_setup);
+
+/*
+ * Start base init sequence
  *  - Disable entering sleep mode
  *  - Disable RF
  *  - Phisicayl layer (GSM or LTE) is defined automatically
  *  - Set preferred network (f.e. NB-Iot) or return unsupported error
  *
- *  Returns SIM7080_SUCCESS in case of init process has been started.
+ * Returns SIM7080_SUCCESS in case of init process has been started.
  */
-int sim7080_init(sim7080_dev_t *dev,
-                  sim7080_network_settings_t *net_setup,
-                  sim7080_protocol_settings_t *prot_setup);
+int sim7080_init(sim7080_dev_t *dev);
 
 /*
  * Connect to <net_setup> network.
@@ -181,7 +190,7 @@ int sim7080_proto_connect(sim7080_dev_t *dev);
  *
  * Returns one of sim7080_sm_t states.
  * Bussiness logic is based on these returns. See example of using.
- * 
+ *
  * Returns 'SIM7080_SOME_ERR_HAPPENED' value in case of error.abort
  * Particular error code will be placed in 'error_code' if not NULL.
  * Use it in sim7080_err_to_string() function to obtain human readable string.
@@ -191,7 +200,7 @@ int sim7080_poll(sim7080_dev_t *dev, int *error_code);
 /*
  * Convert 'error_code' to human string.
  */
-const char *sim7080_err_to_string(sim7080_dev_t *dev, int error_code);
+const char *sim7080_err_to_string(int error_code);
 
 /*
  * Parser of the input RX byte from the module.
@@ -203,7 +212,7 @@ void sim7080_rx_byte_isr(sim7080_dev_t *dev, uint8_t new_byte);
  * Used by high level code to abort internal rx buffer.
  * Might be used if we hadn't received end of rx condition, but already recevied silence on rx line.
  * Of course detecting the silence on the line (like in Modbus) must be implemented somewhere in
- * user code, but not in this driver. 
+ * user code, but not in this driver.
  */
 void sim7080_abort_in_progress_receiving(sim7080_dev_t *dev);
 
