@@ -34,13 +34,12 @@ typedef enum {
  * All possible errors.
  */
 typedef enum {
-    SIM7080_STATUS_SUCCESS,
-    SIM7080_STATUS_COMMON_FAIL,
-    SIM7080_STATUS_HW_TX_FAIL,
-    SIM7080_STATUS_NOT_SUPPORTED,
-    SIM7080_STATUS_INIT_BAD_ARGS,
-    SIM7080_STATUS_INIT_TIMEOUT,
-
+    SIM7080_RET_STATUS_SUCCESS,
+    SIM7080_RET_STATUS_BAD_ARGS,
+    SIM7080_RET_STATUS_HW_TX_FAIL,
+    SIM7080_RET_STATUS_NOT_SUPPORTED,
+    SIM7080_RET_STATUS_TIMEOUT,
+    SIM7080_RET_STATUS_RSP_ERR,
 } sim7080_err_t;
 
 /*
@@ -74,7 +73,9 @@ typedef struct {
     char *expected_good_rsp;              /* Good answer from the module. */
     char *expected_good_pattern;          /* Good pattern in the answer from the module  */
 
-    int (*rsp_parser)(uint8_t *rsp, size_t rsplen); /* Parse input response if needed. Must return SIM7080_SUCCESS in case of success */
+    /* Parse input response if needed. Must return SIM7080_SUCCESS in case of success */
+    int (*rsp_parser)(uint8_t *rsp, size_t rsplen,
+        const char *pattern, size_t patternlen);
 } sim7080_at_cmd_table_t;
 
 /*
@@ -127,7 +128,7 @@ typedef struct {
     void (*pwrkey_pin_set)(void);
     void (*pwrkey_pin_reset)(void);
 
-    /* UART related functions. Returns SIM7080_STATUS_SUCCESS in case of success */
+    /* UART related functions. Returns SIM7080_RET_STATUS_SUCCESS in case of success */
     int (*transmit_data)(uint8_t *data, size_t len);
 } sim7080_ll_t;
 
@@ -209,18 +210,11 @@ const char *sim7080_err_to_string(int error_code);
 void sim7080_rx_byte_isr(sim7080_dev_t *dev, uint8_t new_byte);
 
 /*
- * Used by high level code to abort internal rx buffer.
- * Might be used if we hadn't received end of rx condition, but already recevied silence on rx line.
- * Of course detecting the silence on the line (like in Modbus) must be implemented somewhere in
- * user code, but not in this driver.
- */
-void sim7080_abort_in_progress_receiving(sim7080_dev_t *dev);
-
-/*
  * Sleep mode control. To make it works, sim7080 DTR pin must be used in the schematic.
+ * Retutns sim7080_err_t.
  */
-void sim7080_enter_sleep_mode(sim7080_dev_t *dev);
-void sim7080_exit_sleep_mode(sim7080_dev_t *dev);
+int sim7080_enter_sleep_mode(sim7080_dev_t *dev);
+int sim7080_exit_sleep_mode(sim7080_dev_t *dev);
 
 #ifdef __cplusplus
 }
