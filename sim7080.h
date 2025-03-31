@@ -23,20 +23,14 @@ typedef enum {
 } sim7080_protocol_types_t;
 
 /*
- * Type of responses from the module.
- */
-typedef enum {
-    SIM7080_SIMPLE_RSP,   /* Any "oneword" response. F.e. "OK\r\n" */
-    SIM7080_COMPLEX_RSP,  /* Responses requred to be parsed */
-} sim7080_rsp_type_t;
-
-/*
  * All possible errors.
  */
 typedef enum {
     SIM7080_RET_STATUS_SUCCESS,
+    SIM7080_EMPTY_GREETING,
     SIM7080_RET_STATUS_BAD_ARGS,
     SIM7080_RET_STATUS_HW_TX_FAIL,
+    SIM7080_RET_STATUS_HW_RX_FAIL,
     SIM7080_RET_STATUS_NOT_SUPPORTED,
     SIM7080_RET_STATUS_TIMEOUT,
     SIM7080_RET_STATUS_RSP_ERR,
@@ -46,16 +40,28 @@ typedef enum {
  * SIM7080 module state machine
  */
 typedef enum {
-    SIM7080_SM_SOME_ERR_HAPPENED = -1,
-    SIM7080_SM_INITIAL,
-    SIM7080_SM_INIT_IN_PROGRESS,
-    SIM7080_SM_INIT_DONE,
-    SIM7080_SM_NET_CONNECT_IN_PROGRESS,
-    SIM7080_SM_NET_CONNECT_FAILED,
-    SIM7080_SM_NET_CONNECTED,
+    SIM7080_SM_UNKNOWN = -1,
+
+    /* Waiting for module boot up after power supplied */
+    SIM7080_SM_BOOT_IN_PROGRESS,
+    SIM7080_SM_BOOT_FAILED,
+    SIM7080_SM_BOOT_DONE,
+
+    /* Initial setup: disalbe sleep mode, choose net prefences etc */
+    SIM7080_SM_INITIAL_SETUP_IN_PROGRESS,
+    SIM7080_SM_INITIAL_SETUP_FAILED,
+    SIM7080_SM_INITIAL_SETUP_DONE,
+
+    /* Register on the network by given APN */
+    SIM7080_SM_NET_REGISTRATION_IN_PROGRESS,
+    SIM7080_SM_NET_REGISTRATION_FAILED,
+    SIM7080_SM_NET_REGISTRATION_DONE,
+
+    /* Connect to the given protocol server (MQTT for now) */
     SIM7080_SM_PROTO_CONNECT_IN_PROGRESS,
     SIM7080_SM_PROTO_CONNECT_FAILED,
     SIM7080_SM_PROTO_CONNECTED,
+
     SIM7080_SM_MQTT_READY_TO_WORK,
     SIM7080_SM_TRANSMIT_USER_DATA_DONE,
     SIM7080_SM_RECEIVE_NEW_USER_DATA_DONE,
@@ -66,16 +72,9 @@ typedef enum {
  * AT-commands should be transmitted to sim7080 module in async manner.
  */
 typedef struct {
-    char *at;                             /* AT command string with NO \r\n at the end */
-    uint32_t at_rsp_timeout_ms;           /* Wait module response that time */
-    int rsp_type;                         /* SIM7080_SIMPLE_RESPONSE: the response will be just compared with 'expected_goot_response'.
-                                             SIM7080_COMPLEX_RESPONSE - the response required to be parsed to find 'expected_good_pattern' */
-    char *expected_good_rsp;              /* Good answer from the module. */
-    char *expected_good_pattern;          /* Good pattern in the answer from the module  */
-
-    /* Parse input response if needed. Must return SIM7080_SUCCESS in case of success */
-    int (*rsp_parser)(uint8_t *rsp, size_t rsplen,
-        const char *pattern, size_t patternlen);
+    const char *at;                    /* AT command string with NO \r\n at the end */
+    const char *expected_good_pattern; /* Good answer from the module. */
+    uint32_t at_rsp_timeout_ms;        /* Wait module response that time */
 } sim7080_at_cmd_table_t;
 
 /*
@@ -128,18 +127,25 @@ typedef struct {
     void (*pwrkey_pin_set)(void);
     void (*pwrkey_pin_reset)(void);
 
-    /* UART related functions. Returns SIM7080_RET_STATUS_SUCCESS in case of success */
-    int (*transmit_data)(uint8_t *data, size_t len);
+    /* UART related functions. Polling mode. Returns SIM7080_RET_STATUS_SUCCESS in case of success */
+    int (*transmit_data_polling_mode)(uint8_t *data, size_t len, uint32_t timeout_ms);
+    int (*receive_data_polling_mode)(uint8_t *data, size_t len, uint32_t timeout_ms);
+
+    /* UART related functions. IRQ mode. Returns SIM7080_RET_STATUS_SUCCESS in case of success */
+    int (*receive_in_async_mode_start)(uint8_t *rx_data, size_t rx_desired_len);
+    int (*receive_in_async_mode_stop)(void);
 } sim7080_ll_t;
 
 /*
  * Commom device struct
  */
 typedef struct {
-    sim7080_ll_t *ll_funcs;
+    sim7080_ll_t *ll;
     sim7080_network_settings_t *net_settings;
     sim7080_protocol_settings_t *prot_settings;
+    void (*logger_p)(const char *format, ...);
     int state;
+    int power_state;
 } sim7080_dev_t;
 
 
@@ -148,42 +154,37 @@ typedef struct {
 /*******************************/
 
 /*
- * Assign net and protocol parameters and toggle POWER KEY
+ * Toggle PWRKEY and waiting for the module greeting message.
+ * This function must be called before any others.
  *
- *  Returns SIM7080_SUCCESS in case of init process CAN BE started.
+ * Returns SIM7080_RET_STATUS_SUCCESS in case of success
+ * and the module is alive.
  */
-int sim7080_init_hw_and_net_params(sim7080_dev_t *dev,
-                                   sim7080_network_settings_t *net_setup,
-                                   sim7080_protocol_settings_t *prot_setup);
+int sim7080_init(sim7080_dev_t *dev, sim7080_ll_t *ll);
 
 /*
- * Start base init sequence
- *  - Disable entering sleep mode
- *  - Disable RF
- *  - Phisicayl layer (GSM or LTE) is defined automatically
- *  - Set preferred network (f.e. NB-Iot) or return unsupported error
- *
- * Returns SIM7080_SUCCESS in case of init process has been started.
+ * Enable debug prints from the lib.
  */
-int sim7080_init(sim7080_dev_t *dev);
+void sim7080_debug_mode(sim7080_dev_t *dev,
+                        void (*logger_p)(const char *format, ...));
 
 /*
- * Connect to <net_setup> network.
- * Status and progress of connection will be returned by sim7080_poll()
+ * Register in the <net_setup> network.
  *
- * Returns SIM7080_SUCCESS in case of connection process has been started.
- * sim7080_poll() will return SIM7080_NET_CONNECT_IN_PROGRESS.
+ * Returns SIM7080_RET_STATUS_SUCCESS in case of registration process has been started.
+ * sim7080_poll() will return SIM7080_SM_NET_REGISTRATION_IN_PROGRESS.
  */
-int sim7080_net_connect(sim7080_dev_t *dev);
+int sim7080_net_register(sim7080_dev_t *dev,
+                         sim7080_network_settings_t *net_setup);
 
 /*
- * Connect to <prot_setup> network.
- * Status and progress of connection will be returned by sim7080_poll()
+ * Connect to the <prot_setup> network.
  *
- * Returns SIM7080_SUCCESS in case of connection process has been started.
- * sim7080_poll() will return SIM7080_PROTO_CONNECT_IN_PROGRESS.
+ * Returns SIM7080_RET_STATUS_SUCCESS in case of connection process has been started.
+ * sim7080_poll() will return SIM7080_SM_PROTO_CONNECT_IN_PROGRESS.
  */
-int sim7080_proto_connect(sim7080_dev_t *dev);
+int sim7080_proto_connect(sim7080_dev_t *dev,
+                          sim7080_protocol_settings_t *prot_setup);
 
 /*
  * Process function to make the transmittion state machine alive.
@@ -192,7 +193,7 @@ int sim7080_proto_connect(sim7080_dev_t *dev);
  * Returns one of sim7080_sm_t states.
  * Bussiness logic is based on these returns. See example of using.
  *
- * Returns 'SIM7080_SOME_ERR_HAPPENED' value in case of error.abort
+ * Returns 'SIM7080_SOME_ERR_HAPPENED' value in case of error.
  * Particular error code will be placed in 'error_code' if not NULL.
  * Use it in sim7080_err_to_string() function to obtain human readable string.
  */
@@ -207,7 +208,7 @@ const char *sim7080_err_to_string(int error_code);
  * Parser of the input RX byte from the module.
  * Call in UART Rx IRQ handler.
  */
-void sim7080_rx_byte_isr(sim7080_dev_t *dev, uint8_t new_byte);
+void sim7080_rx_byte_isr(sim7080_dev_t *dev);
 
 /*
  * Sleep mode control. To make it works, sim7080 DTR pin must be used in the schematic.
