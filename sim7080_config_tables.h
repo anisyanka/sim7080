@@ -1,0 +1,37 @@
+#ifndef SIM7080_SETTINGS_H__
+#define SIM7080_SETTINGS_H__
+
+#include <stdint.h>
+#include <stddef.h>
+
+#include "sim7080.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+sim7080_at_cmd_table_t bootup_table[] = {
+    { "", "\r\n+CPIN: READY\r\n\r\nSMS Ready\r\n", 20000 } /* Waiting boot up time */
+};
+
+sim7080_at_cmd_table_t base_init_table[] = {
+    { "AT",         "OK", 1000 }, /* Just ping */
+    { "AT+CSCLK=0", "OK", 1000 }, /* Disable entering sleep mode */
+    { "AT+CFUN=0",  "OK", 1000 }, /* Disable RF */
+    { "AT+CNMP=2",  "OK", 1000 }, /* Phisical layer (GSM or LTE) is defined automatically */
+    { "AT+CMNB=2",  "OK", 1000 }, /* Set preferred network (f.e. NB-Iot) */
+};
+
+sim7080_at_cmd_table_t net_mts_nbiot_table[] = {
+    { "", "", 1000 },
+};
+
+sim7080_at_cmd_table_t protocol_yandex_mqtt_table[] = {
+    { "", "", 1000 },
+};
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* SIM7080_SETTINGS_H__ */
