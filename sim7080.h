@@ -26,9 +26,26 @@ typedef enum {
  * AT-commands should be transmitted to sim7080 module in async manner.
  */
 typedef struct {
-    const char *at;                    /* AT command string with NO \r\n at the end */
-    const char *expected_good_pattern; /* Good answer from the module. */
-    uint32_t at_rsp_timeout_ms;        /* Wait module response that time */
+    /* AT command string with NO \r\n at the end */
+    const char *at;
+
+    /* Good answer from the module. */
+    const char *expected_good_pattern;
+
+    /*
+     * Wait for the module response during that time.
+     * If there is no response during this time,
+     * app error handler will be triggered
+     * with SIM7080_RET_STATUS_TIMEOUT error code
+     */
+    uint32_t at_rsp_timeout_ms;
+
+    /*
+     * Some time just to delay after obtaining the good response pattern.
+     * Used to allow the module to finish sending its answer.
+     * It might be usefull in some commands.
+     */
+    uint32_t at_after_rsp_timeout_ms;
 } sim7080_at_cmd_table_t;
 
 /*

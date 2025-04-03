@@ -10,9 +10,9 @@
 /***********************************/
 #define SIM7080_DBG_PRINT(dev, format, ...) \
 do {\
-    if (logger_print)\
+    if (dev->logger_p)\
     {\
-        logger_print(format, __VA_ARGS__);\
+        dev->logger_p(format, __VA_ARGS__);\
     }\
 } while (0)
 
@@ -30,7 +30,7 @@ typedef enum {
 typedef enum {
     TXRX_SM_SEQ_SEND_AT,
     TXRX_SM_SEQ_WAIT_RESP,
-    TXRX_SM_SEQ_PARSE_RESP,
+    TXRX_SM_SEQ_WAIT_AFTER_RESP,
 } txrx_sm_t;
 
 typedef enum {
@@ -80,6 +80,7 @@ static int rsp_recieved_flag = 0;
 static char *expected_at_reply = "OK";
 static volatile int expected_at_min_reply_len = 0;
 static volatile int expected_at_reply_idx = 0;
+static char *current_at = "AT";
 
 static txrx_sm_t txrx_seq_sm = TXRX_SM_SEQ_SEND_AT;
 static int txrx_at_indx = 0;
@@ -95,7 +96,7 @@ static struct sim7080_error_table {
     [SIM7080_RET_STATUS_HW_RX_FAIL] = { "UART RX starting returned error or timeout event" },
     [SIM7080_RET_STATUS_NOT_SUPPORTED] = { "Called functionality is not supported" },
     [SIM7080_RET_STATUS_TIMEOUT] = { "Some AT command's response haven't been obtained" },
-    [SIM7080_RET_STATUS_RSP_ERR] = { "SIM7080 reply with wrong message" },
+    [SIM7080_RET_STATUS_RSP_ERR] = { "SIM7080 reply with unexpected message" },
 };
 
 
@@ -107,8 +108,6 @@ static int txrx_send_at_cmd_table(sim7080_dev_t *dev,
 static void txrx_hanle_rv(sim7080_dev_t *dev, const char* sm_state, int rv,
                           int *app_err, int next_good_sm, int next_bad_sm);
 static void txrx_reset_sm(void);
-static int is_pattern_exist_in_data(uint8_t *data, size_t data_len,
-                                    const char *pattern, size_t pattern_len); /* 1 - exists */
 static void power_up(sim7080_dev_t *dev);
 static void power_down(sim7080_dev_t *dev);
 
@@ -246,14 +245,15 @@ void sim7080_poll(sim7080_dev_t *dev)
 
 const char *sim7080_err_to_string(int error_code)
 {
-    static char ret_error_string[256] = { 0 };
+    static char ret_error_string[512] = { 0 };
 
     if ((error_code < 0 ) || \
         (error_code > (sizeof(error_table)/sizeof(error_table[0]) - 1))) {
         return "<null>. Wrong error code";
     } else {
         (void)snprintf(ret_error_string, sizeof(ret_error_string),
-                       "[%s] %s", sm_state_string,
+                       "[%s] Tried to send AT=\"%s\". But got \"%s\"",
+                       sm_state_string, current_at,
                        error_table[error_code].err_desc);
     }
 
@@ -341,15 +341,20 @@ static int txrx_send_at_cmd_table(sim7080_dev_t *dev, sim7080_at_cmd_table_t *ta
 
             dev->ll->delay_ms(100);
 
-            rsp_recieved_flag = 0;
+            common_rx_cnt = 0;
+            memset(rx_buffer, 0, sizeof(rx_buffer));
+
+            current_at = (char *)table[txrx_at_indx].at;
+
             expected_at_reply = (char *)table[txrx_at_indx].expected_good_pattern;
             expected_at_min_reply_len = strlen(table[txrx_at_indx].expected_good_pattern);
             expected_at_reply_idx = 0;
-            
+            rsp_recieved_flag = 0;
+
             size_t at_len = strlen(table[txrx_at_indx].at);
             if (at_len) {
                 if (dev->ll->transmit_data_polling_mode(
-                        (uint8_t *)table[txrx_at_indx].at, at_len,100) \
+                        (uint8_t *)table[txrx_at_indx].at, at_len, 100) \
                                     != SIM7080_RET_STATUS_SUCCESS) {
                     return TXRX_RET_HW_ERROR_OCCURED;
                 }
@@ -365,8 +370,8 @@ static int txrx_send_at_cmd_table(sim7080_dev_t *dev, sim7080_at_cmd_table_t *ta
             txrx_seq_sm = TXRX_SM_SEQ_WAIT_RESP;
         } else if (txrx_seq_sm == TXRX_SM_SEQ_WAIT_RESP) { /* Waititig for the module's response... */
             if (rsp_recieved_flag) {
-                ++txrx_at_indx;
-                txrx_seq_sm = TXRX_SM_SEQ_SEND_AT;
+                txrx_started_tick_ms = dev->ll->get_tick_ms();
+                txrx_seq_sm = TXRX_SM_SEQ_WAIT_AFTER_RESP;
             } else {
                 txrx_curr_tick_ms = dev->ll->get_tick_ms();
                 if ((txrx_curr_tick_ms - txrx_started_tick_ms) >=
@@ -374,18 +379,16 @@ static int txrx_send_at_cmd_table(sim7080_dev_t *dev, sim7080_at_cmd_table_t *ta
                     if (common_rx_cnt == 0) {
                         ret = TXRX_RET_TIMEOUT_ERROR_OCCURED;
                     } else {
-                        txrx_seq_sm = TXRX_SM_SEQ_PARSE_RESP;
+                        ret = TXRX_RET_ERROR_RESPONSE;
                     }
                 }
             }
-        } else if (txrx_seq_sm == TXRX_SM_SEQ_PARSE_RESP) { /* Response obtained, parse it */
-            if (is_pattern_exist_in_data(rx_buffer, common_rx_cnt,
-                        table[txrx_at_indx].expected_good_pattern,
-                        strlen(table[txrx_at_indx].expected_good_pattern))) {
+        } else if (txrx_seq_sm == TXRX_SM_SEQ_WAIT_AFTER_RESP) { /* Wait a bit after getting success response */
+            txrx_curr_tick_ms = dev->ll->get_tick_ms();
+            if ((txrx_curr_tick_ms - txrx_started_tick_ms) >=
+                            table[txrx_at_indx].at_after_rsp_timeout_ms) {
                 ++txrx_at_indx;
                 txrx_seq_sm = TXRX_SM_SEQ_SEND_AT;
-            } else {
-                ret = TXRX_RET_ERROR_RESPONSE;
             }
         }
     } else {
@@ -401,31 +404,6 @@ static void txrx_reset_sm(void)
     txrx_at_indx = 0;
     txrx_started_tick_ms = 0;
     txrx_curr_tick_ms = 0;
-    common_rx_cnt = 0;
-    memset(rx_buffer, 0, sizeof(rx_buffer));
-}
-
-static int is_pattern_exist_in_data(uint8_t *data, size_t data_len,
-                                    const char *pattern, size_t pattern_len)
-{
-    int k = 0;
-
-    for (int i = 0; i < data_len; ++i) {
-        if (data[i] == pattern[k]) {
-            ++k;
-        } else {
-            k = 0;
-        }
-
-        if ((data_len - i) < (pattern_len - k)) {
-            return 0;
-        }
-        if (k == pattern_len) {
-            return 1;
-        }
-    }
-
-    return 0;
 }
 
 static void power_up(sim7080_dev_t *dev)
