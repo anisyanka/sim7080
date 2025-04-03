@@ -177,6 +177,9 @@ void sim7080_poll(sim7080_dev_t *dev)
         break;
     case SIM7080_SM_BOOT_DONE:
         txrx_reset_sm();
+        if (dev->app->bootup_done) {
+            dev->app->bootup_done();
+        }
         dev->state = SIM7080_SM_INITIAL_SETUP_IN_PROGRESS;
         break;
 
@@ -191,6 +194,9 @@ void sim7080_poll(sim7080_dev_t *dev)
         break;
     case SIM7080_SM_INITIAL_SETUP_DONE:
         txrx_reset_sm();
+        if (dev->app->initial_setup_done) {
+            dev->app->initial_setup_done();
+        }
         dev->state = SIM7080_SM_NET_REGISTRATION_IN_PROGRESS;
         break;
 
@@ -205,6 +211,9 @@ void sim7080_poll(sim7080_dev_t *dev)
         break;
     case SIM7080_SM_NET_REGISTRATION_DONE:
         txrx_reset_sm();
+        if (dev->app->net_registration_done) {
+            dev->app->net_registration_done();
+        }
         dev->state = SIM7080_SM_PROTO_CONNECT_IN_PROGRESS;
         break;
 
@@ -219,6 +228,9 @@ void sim7080_poll(sim7080_dev_t *dev)
         break;
     case SIM7080_SM_PROTO_CONNECT_DONE:
         txrx_reset_sm();
+        if (dev->app->mqtt_server_connection_done) {
+            dev->app->mqtt_server_connection_done();
+        }
         dev->state = SIM7080_SM_MQTT_READY_TO_WORK;
         break;
 

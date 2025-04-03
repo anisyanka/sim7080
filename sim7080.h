@@ -68,6 +68,8 @@ typedef struct {
  * User's callbacks
  */
 typedef struct {
+    void (*bootup_done)(void);
+    void (*initial_setup_done)(void);
     void (*net_registration_done)(void);
     void (*mqtt_server_connection_done)(void);
     void (*mqtt_transmission_done)(void);
