@@ -45,10 +45,6 @@ typedef struct {
 
     /* UART related functions. Polling mode. Returns SIM7080_RET_STATUS_SUCCESS in case of success */
     int (*transmit_data_polling_mode)(uint8_t *data, size_t len, uint32_t timeout_ms);
-
-    /* UART related functions. IRQ mode. Returns SIM7080_RET_STATUS_SUCCESS in case of success */
-    int (*receive_in_async_mode_start)(uint8_t *rx_data, size_t rx_desired_len);
-    int (*receive_in_async_mode_stop)(void);
 } sim7080_ll_t;
 
 /*
@@ -90,7 +86,7 @@ int sim7080_init(sim7080_dev_t *dev,
 /*
  * Reset internal state machine. Call it in error handler.
  */
-int sim7080_reset(sim7080_dev_t *dev);
+void sim7080_reset(sim7080_dev_t *dev);
 
 /*
  * Setup application callbacks
@@ -118,7 +114,7 @@ const char *sim7080_err_to_string(int error_code);
  * Parser of the input RX byte from the module.
  * Call in UART Rx IRQ handler.
  */
-void sim7080_rx_byte_isr(sim7080_dev_t *dev);
+void sim7080_rx_byte_isr(sim7080_dev_t *dev, uint8_t new_byte);
 
 /*
  * Sleep mode control. To make it works, sim7080 DTR pin must be used in the schematic.

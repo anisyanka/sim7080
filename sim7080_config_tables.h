@@ -15,7 +15,8 @@ sim7080_at_cmd_table_t bootup_table[] = {
 };
 
 sim7080_at_cmd_table_t base_init_table[] = {
-    { "AT",         "OK", 1000 }, /* Just ping */
+    { "AT+CREBOOT", "AT", 20000 },
+    { "AT",         "OK", 4000 }, /* Just ping */
     { "AT+CSCLK=0", "OK", 1000 }, /* Disable entering sleep mode */
     { "AT+CFUN=0",  "OK", 1000 }, /* Disable RF */
     { "AT+CNMP=2",  "OK", 1000 }, /* Phisical layer (GSM or LTE) is defined automatically */
@@ -23,7 +24,10 @@ sim7080_at_cmd_table_t base_init_table[] = {
 };
 
 sim7080_at_cmd_table_t net_mts_nbiot_table[] = {
-    { "", "", 1000 },
+    { "AT+CGDCONT=1,\"IP\",\"iot\"", "OK", 1000 },
+    { "AT+CNCFG=0,1,\"iot\"",        "OK", 1000 },
+    { "AT+CFUN=1",                   "OK", 10000 },
+    { "AT+CNACT=0,1",                "ACTIVE", 60000 },
 };
 
 sim7080_at_cmd_table_t protocol_yandex_mqtt_table[] = {

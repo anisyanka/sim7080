@@ -75,13 +75,11 @@ static char sm_state_string[32] = { '[', 'n', 'u', 'l', 'l', ']', '\0'};
 
 static uint8_t rx_buffer[512] = { 0 };
 static int common_rx_cnt = 0;
+static int rsp_recieved_flag = 0;
 
 static char *expected_at_reply = "OK";
-static int expected_at_min_reply_len = 0;
-static int expected_at_reply_idx = 0;
-
-static uint8_t rx_byte = 0;
-static int rsp_recieved_flag = 0;
+static volatile int expected_at_min_reply_len = 0;
+static volatile int expected_at_reply_idx = 0;
 
 static txrx_sm_t txrx_seq_sm = TXRX_SM_SEQ_SEND_AT;
 static int txrx_at_indx = 0;
@@ -121,8 +119,7 @@ int sim7080_init(sim7080_dev_t *dev, sim7080_ll_t *ll)
 {
     if (!dev || !ll || !ll->delay_ms || !ll->get_tick_ms || \
         !ll->pwrkey_pin_set || !ll->pwrkey_pin_reset || \
-        !ll->transmit_data_polling_mode || !ll->receive_in_async_mode_start || \
-        !ll->receive_in_async_mode_stop) {
+        !ll->transmit_data_polling_mode) {
         return SIM7080_RET_STATUS_BAD_ARGS;
     }
 
@@ -133,18 +130,12 @@ int sim7080_init(sim7080_dev_t *dev, sim7080_ll_t *ll)
     dev->state = SIM7080_SM_BOOT_IN_PROGRESS;
     dev->power_state = POWER_DOWN;
 
-    if (dev->ll->receive_in_async_mode_start(&rx_byte, 1) \
-                                            != SIM7080_RET_STATUS_SUCCESS) {
-        return SIM7080_RET_STATUS_HW_RX_FAIL;
-    }
-
     power_up(dev);
     return SIM7080_RET_STATUS_SUCCESS;
 }
 
-int sim7080_reset(sim7080_dev_t *dev)
+void sim7080_reset(sim7080_dev_t *dev)
 {
-    dev->ll->receive_in_async_mode_stop();
     dev->ll->pwrkey_pin_reset();
     dev->ll->delay_ms(16000);
     dev->ll->pwrkey_pin_set();
@@ -152,13 +143,6 @@ int sim7080_reset(sim7080_dev_t *dev)
     txrx_reset_sm();
     dev->state = SIM7080_SM_BOOT_IN_PROGRESS;
     dev->power_state = POWER_UP;
-
-    if (dev->ll->receive_in_async_mode_start(&rx_byte, 1) \
-                                            != SIM7080_RET_STATUS_SUCCESS) {
-        return SIM7080_RET_STATUS_HW_RX_FAIL;
-    }
-
-    return SIM7080_RET_STATUS_SUCCESS;
 }
 
 int sim7080_setup_app_cb(sim7080_dev_t *dev, sim7080_app_func_t *app)
@@ -276,25 +260,29 @@ const char *sim7080_err_to_string(int error_code)
     return ret_error_string;
 }
 
-void sim7080_rx_byte_isr(sim7080_dev_t *dev)
+void sim7080_rx_byte_isr(sim7080_dev_t *dev, uint8_t new_byte)
 {
-    rx_buffer[common_rx_cnt++] = rx_byte;
+    rx_buffer[common_rx_cnt++] = new_byte;
     if (common_rx_cnt >= sizeof(rx_buffer)) {
         common_rx_cnt = 0;
     }
 
-    if (expected_at_reply[expected_at_reply_idx] == rx_byte) {
-        ++expected_at_reply_idx;
+    if (rsp_recieved_flag == 0) {
+        if (new_byte == expected_at_reply[expected_at_reply_idx]) {
+            ++expected_at_reply_idx;
 
-        if (expected_at_reply_idx == expected_at_min_reply_len) {
-            rsp_recieved_flag = 1;
+            if (expected_at_reply_idx == expected_at_min_reply_len) {
+                rsp_recieved_flag = 1;
+            }
+        } else {
+            /* Start comparing again to find "substring" */
+            expected_at_reply_idx = 0;
+
+            if (new_byte == expected_at_reply[expected_at_reply_idx]) {
+                ++expected_at_reply_idx;
+            }
         }
-    } else {
-        /* Start comparing again */
-        expected_at_reply_idx = 0;
     }
-
-    dev->ll->receive_in_async_mode_start(&rx_byte, 1);
 }
 
 void sim7080_enter_sleep_mode(sim7080_dev_t *dev)
@@ -350,6 +338,14 @@ static int txrx_send_at_cmd_table(sim7080_dev_t *dev, sim7080_at_cmd_table_t *ta
 
     if (txrx_at_indx < table_size) {
         if (txrx_seq_sm == TXRX_SM_SEQ_SEND_AT) { /* Sending AT command from the table... */
+
+            dev->ll->delay_ms(100);
+
+            rsp_recieved_flag = 0;
+            expected_at_reply = (char *)table[txrx_at_indx].expected_good_pattern;
+            expected_at_min_reply_len = strlen(table[txrx_at_indx].expected_good_pattern);
+            expected_at_reply_idx = 0;
+            
             size_t at_len = strlen(table[txrx_at_indx].at);
             if (at_len) {
                 if (dev->ll->transmit_data_polling_mode(
@@ -365,17 +361,12 @@ static int txrx_send_at_cmd_table(sim7080_dev_t *dev, sim7080_at_cmd_table_t *ta
                     return TXRX_RET_HW_ERROR_OCCURED;
                 }
             }
-
             txrx_started_tick_ms = dev->ll->get_tick_ms();
             txrx_seq_sm = TXRX_SM_SEQ_WAIT_RESP;
-            expected_at_reply = (char *)table[txrx_at_indx].expected_good_pattern;
-            expected_at_min_reply_len = strlen(table[txrx_at_indx].expected_good_pattern);
-            expected_at_reply_idx = 0;
         } else if (txrx_seq_sm == TXRX_SM_SEQ_WAIT_RESP) { /* Waititig for the module's response... */
             if (rsp_recieved_flag) {
                 ++txrx_at_indx;
                 txrx_seq_sm = TXRX_SM_SEQ_SEND_AT;
-                rsp_recieved_flag = 0;
             } else {
                 txrx_curr_tick_ms = dev->ll->get_tick_ms();
                 if ((txrx_curr_tick_ms - txrx_started_tick_ms) >=
@@ -410,24 +401,14 @@ static void txrx_reset_sm(void)
     txrx_at_indx = 0;
     txrx_started_tick_ms = 0;
     txrx_curr_tick_ms = 0;
-
-    rsp_recieved_flag = 0;
-
     common_rx_cnt = 0;
     memset(rx_buffer, 0, sizeof(rx_buffer));
-
-    expected_at_reply_idx = 0;
-    expected_at_min_reply_len = 0;
 }
 
 static int is_pattern_exist_in_data(uint8_t *data, size_t data_len,
                                     const char *pattern, size_t pattern_len)
 {
     int k = 0;
-
-    if (data_len < pattern_len) {
-        return 0;
-    }
 
     for (int i = 0; i < data_len; ++i) {
         if (data[i] == pattern[k]) {
