@@ -26,7 +26,7 @@ typedef enum {
  * AT-commands should be transmitted to sim7080 module in async manner.
  */
 typedef struct {
-    /* AT command string with NO \r\n at the end */
+    /* AT command string WITH \r\n at the end */
     const char *at;
 
     /* Good answer from the module. */
@@ -71,6 +71,7 @@ typedef struct {
     void (*bootup_done)(void);
     void (*initial_setup_done)(void);
     void (*net_registration_done)(void);
+    void (*setup_device_keys_done)(void);
     void (*mqtt_server_connection_done)(void);
     void (*mqtt_transmission_done)(void);
     void (*error_occured)(int error);

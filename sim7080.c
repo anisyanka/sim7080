@@ -57,6 +57,11 @@ typedef enum {
     SIM7080_SM_NET_REGISTRATION_FAILED,
     SIM7080_SM_NET_REGISTRATION_DONE,
 
+    /* Send ssl keys */
+    SIM7080_SM_SSL_TX_IN_PROGRESS,
+    SIM7080_SM_SSL_TX_FAILED,
+    SIM7080_SM_SSL_TX_DONE,
+
     /* Connect to the given protocol server (MQTT for now) */
     SIM7080_SM_PROTO_CONNECT_IN_PROGRESS,
     SIM7080_SM_PROTO_CONNECT_FAILED,
@@ -70,7 +75,6 @@ typedef enum {
 
 /* -------- Local variables -------- */
 /*************************************/
-static const uint8_t end_of_at_seq[] = "\r\n";
 static char sm_state_string[32] = { '[', 'n', 'u', 'l', 'l', ']', '\0'};
 
 static uint8_t rx_buffer[512] = { 0 };
@@ -214,6 +218,23 @@ void sim7080_poll(sim7080_dev_t *dev)
         if (dev->app->net_registration_done) {
             dev->app->net_registration_done();
         }
+        dev->state = SIM7080_SM_SSL_TX_IN_PROGRESS;
+        break;
+
+    /* Setup SSL device keys */
+    /*-----------------------*/
+    case SIM7080_SM_SSL_TX_IN_PROGRESS:
+        txrx_rv = txrx_send_at_cmd_table(dev, setup_ssl_keys,
+                    sizeof(setup_ssl_keys)/sizeof(setup_ssl_keys[0]));
+        txrx_hanle_rv(dev, "Set SSL keys", txrx_rv, &app_error,
+                      SIM7080_SM_SSL_TX_DONE,
+                      SIM7080_SM_SSL_TX_FAILED);
+        break;
+    case SIM7080_SM_SSL_TX_DONE:
+        txrx_reset_sm();
+        if (dev->app->setup_device_keys_done) {
+            dev->app->setup_device_keys_done();
+        }
         dev->state = SIM7080_SM_PROTO_CONNECT_IN_PROGRESS;
         break;
 
@@ -245,6 +266,7 @@ void sim7080_poll(sim7080_dev_t *dev)
     case SIM7080_SM_INITIAL_SETUP_FAILED:
     case SIM7080_SM_NET_REGISTRATION_FAILED:
     case SIM7080_SM_PROTO_CONNECT_FAILED:
+    case SIM7080_SM_SSL_TX_FAILED:
         if (dev->app->error_occured) {
             dev->app->error_occured(app_error);
         }
@@ -366,20 +388,19 @@ static int txrx_send_at_cmd_table(sim7080_dev_t *dev, sim7080_at_cmd_table_t *ta
             size_t at_len = strlen(table[txrx_at_indx].at);
             if (at_len) {
                 if (dev->ll->transmit_data_polling_mode(
-                        (uint8_t *)table[txrx_at_indx].at, at_len, 100) \
+                        (uint8_t *)table[txrx_at_indx].at, at_len, 2000) \
                                     != SIM7080_RET_STATUS_SUCCESS) {
                     return TXRX_RET_HW_ERROR_OCCURED;
                 }
-
-                if (dev->ll->transmit_data_polling_mode(
-                        (uint8_t *)end_of_at_seq,
-                        sizeof(end_of_at_seq) - 1,
-                        100) != SIM7080_RET_STATUS_SUCCESS) {
-                    return TXRX_RET_HW_ERROR_OCCURED;
-                }
             }
+
             txrx_started_tick_ms = dev->ll->get_tick_ms();
-            txrx_seq_sm = TXRX_SM_SEQ_WAIT_RESP;
+
+            if (expected_at_min_reply_len) {
+                txrx_seq_sm = TXRX_SM_SEQ_WAIT_RESP;
+            } else {
+                txrx_seq_sm = TXRX_SM_SEQ_WAIT_AFTER_RESP;
+            }
         } else if (txrx_seq_sm == TXRX_SM_SEQ_WAIT_RESP) { /* Waititig for the module's response... */
             if (rsp_recieved_flag) {
                 txrx_started_tick_ms = dev->ll->get_tick_ms();
