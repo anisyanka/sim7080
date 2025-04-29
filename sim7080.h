@@ -19,6 +19,7 @@ typedef enum {
     SIM7080_RET_STATUS_NOT_SUPPORTED,
     SIM7080_RET_STATUS_TIMEOUT,
     SIM7080_RET_STATUS_RSP_ERR,
+    SIM7080_RET_STATUS_MODULE_NOT_READY,
 } sim7080_err_t;
 
 /*
@@ -142,6 +143,11 @@ void sim7080_rx_byte_isr(sim7080_dev_t *dev, uint8_t new_byte);
  */
 void sim7080_enter_sleep_mode(sim7080_dev_t *dev);
 void sim7080_exit_sleep_mode(sim7080_dev_t *dev);
+
+/*
+ * Publish data to MQTT server with the help of AT+SMPUB
+ */
+int sim7080_publish_data(sim7080_dev_t *dev, const char *data, size_t len);
 
 #ifdef __cplusplus
 }

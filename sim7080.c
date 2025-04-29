@@ -68,7 +68,12 @@ typedef enum {
     SIM7080_SM_PROTO_CONNECT_DONE,
 
     SIM7080_SM_MQTT_READY_TO_WORK,
+
+    /* Sending data */
+    SIM7080_SM_TRANSMIT_USER_DATA_IN_PROGRESS,
+    SIM7080_SM_TRANSMIT_USER_DATA_FAILED,
     SIM7080_SM_TRANSMIT_USER_DATA_DONE,
+
     SIM7080_SM_RECEIVE_NEW_USER_DATA_DONE,
 } sim7080_sm_t;
 
@@ -101,6 +106,7 @@ static struct sim7080_error_table {
     [SIM7080_RET_STATUS_NOT_SUPPORTED] = { "Called functionality is not supported" },
     [SIM7080_RET_STATUS_TIMEOUT] = { "Some AT command's response haven't been obtained" },
     [SIM7080_RET_STATUS_RSP_ERR] = { "SIM7080 reply with unexpected message" },
+    [SIM7080_RET_STATUS_MODULE_NOT_READY] = { "SIM7080 is not ready to send data. Might be initialization in progress." },
 };
 
 
@@ -329,6 +335,24 @@ void sim7080_exit_sleep_mode(sim7080_dev_t *dev)
     power_up(dev);
 }
 
+int sim7080_publish_data(sim7080_dev_t *dev, const char *data, size_t len)
+{
+    if (dev->state != SIM7080_SM_MQTT_READY_TO_WORK) {
+        return SIM7080_RET_STATUS_MODULE_NOT_READY;
+    }
+
+    // TODO: put at variable out of this code.
+    // Might be we need to implement a script to generate register ID (or topic ID) during fw flashing
+    // and compose this char *at there before calling sim7080_publish_data();
+
+    char *at = "AT+SMPUB=\"$registries/are6phis3t903qjfrje3/events\",93,0,1\r\n";
+
+    dev->ll->transmit_data_polling_mode((uint8_t *)at, strlen(at), 1000);
+    dev->ll->delay_ms(10);
+    dev->ll->transmit_data_polling_mode((uint8_t *)data, len, 1000);
+
+    return SIM7080_RET_STATUS_SUCCESS;
+}
 
 /* Implement local functions */
 /*****************************/
